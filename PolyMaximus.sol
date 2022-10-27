@@ -12,6 +12,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /// Contract Interfaces and Abstract contracts
     // this interface comes directly from the Icosa contract. Many of these are not used in Poly Maximus
+    // https://etherscan.io/token/0x3819f64f282bf135d62168c1e513280daf905e06#code
     interface HedronContract {
         struct LiquidationStore{
             uint256 liquidationStart;
@@ -208,6 +209,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
         ) external returns (bool);
     }
     // this comes from the icosa contract. Used for staking HDRN
+    // https://etherscan.io/token/0xfc4913214444af5c715cc9f7b52655e788a569ed#code
     interface IcosaInterface {
         event Approval(
             address indexed owner,
@@ -410,11 +412,14 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
     contract TEAMContract {
         function getCurrentPeriod() public view returns (uint256) {}
     }
+    
+    // https://etherscan.io/token/0x2b591e99afe9f32eaa6214f7b7629768c40eeb39#code
     contract HEXContract {
         function currentDay() external view returns (uint256){}
         function stakeStart(uint256 newStakedHearts, uint256 newStakedDays) external {}
         function stakeEnd(uint256 stakeIndex, uint40 stakeIdParam) external {}
     }
+    // unused, replaced with above hedron interface
     contract HedronContracts {
         struct HEXStakeMinimal {
         uint40 stakeId;
@@ -451,6 +456,9 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
     function loanLiquidateBid (uint256 liquidationId,uint256 liquidationBid) external returns (uint256) {}
     function loanLiquidateExit(uint256 hsiIndex, uint256 liquidationId) external returns (address) {}
     }
+    // Contract that holds each individual HSI stake
+    // This contract is deployed by the Hedron contract when each HSI is generated
+    // example: https://etherscan.io/address/0x440C2f83B03e1AbCE3B5ab4dB02b2Da055Db5d29#code
     contract HSIContract{
         struct HEXStakeMinimal {
         uint40 stakeId;
@@ -488,6 +496,8 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
             returns(HEXStake memory)
         {}
     }
+    // Used for managing the HSIs
+    // https://etherscan.io/address/0x8BD3d1472A656e312E94fB1BbdD599B8C51D18e3#code
     contract HSIManagerContract {
         mapping(address => address[]) public  hsiLists;
         function hexStakeDetokenize (uint256 tokenId) external returns (address) {}
