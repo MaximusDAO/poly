@@ -12,7 +12,6 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /// Contract Interfaces and Abstract contracts
     // this interface comes directly from the Icosa contract. Many of these are not used in Poly Maximus
-    // https://etherscan.io/token/0x3819f64f282bf135d62168c1e513280daf905e06#code
     interface HedronContract {
         struct LiquidationStore{
             uint256 liquidationStart;
@@ -209,7 +208,6 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
         ) external returns (bool);
     }
     // this comes from the icosa contract. Used for staking HDRN
-    // https://etherscan.io/token/0xfc4913214444af5c715cc9f7b52655e788a569ed#code
     interface IcosaInterface {
         event Approval(
             address indexed owner,
@@ -412,14 +410,11 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
     contract TEAMContract {
         function getCurrentPeriod() public view returns (uint256) {}
     }
-    
-    // https://etherscan.io/token/0x2b591e99afe9f32eaa6214f7b7629768c40eeb39#code
     contract HEXContract {
         function currentDay() external view returns (uint256){}
         function stakeStart(uint256 newStakedHearts, uint256 newStakedDays) external {}
         function stakeEnd(uint256 stakeIndex, uint40 stakeIdParam) external {}
     }
-    // unused, replaced with above hedron interface
     contract HedronContracts {
         struct HEXStakeMinimal {
         uint40 stakeId;
@@ -456,9 +451,6 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
     function loanLiquidateBid (uint256 liquidationId,uint256 liquidationBid) external returns (uint256) {}
     function loanLiquidateExit(uint256 hsiIndex, uint256 liquidationId) external returns (address) {}
     }
-    // Contract that holds each individual HSI stake
-    // This contract is deployed by the Hedron contract when each HSI is generated
-    // example: https://etherscan.io/address/0x440C2f83B03e1AbCE3B5ab4dB02b2Da055Db5d29#code
     contract HSIContract{
         struct HEXStakeMinimal {
         uint40 stakeId;
@@ -496,8 +488,6 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
             returns(HEXStake memory)
         {}
     }
-    // Used for managing the HSIs
-    // https://etherscan.io/address/0x8BD3d1472A656e312E94fB1BbdD599B8C51D18e3#code
     contract HSIManagerContract {
         mapping(address => address[]) public  hsiLists;
         function hexStakeDetokenize (uint256 tokenId) external returns (address) {}
@@ -554,7 +544,7 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
 
 
 
-    
+
     /// Data Structures
 
         struct HEXStakeMinimal {
@@ -644,6 +634,7 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         mapping (address => HEXStake) public HEXStakes;
         address public LAST_ACTIVE_HSI;
         
+        
     
     /// Bid Execution Variables
         mapping (address => bool) IS_EXECUTOR; // mapping of addresses authorized to run executor functions
@@ -660,7 +651,6 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
 
     constructor(uint256 mint_duration) ERC20("Poly Maximus TEST", "POLYTEST") ReentrancyGuard() {
         uint256 start_day=hex_contract.currentDay();
-        TEST_CURRENT_DAY = start_day;
         MINTING_PHASE_START = start_day;
         MINTING_PHASE_END = start_day+mint_duration;
         LAST_BID_PLACED_DAY=MINTING_PHASE_END; // set to first eligible day to prevent stake_leftover_hdrn() from being run before first bid is placed
@@ -674,20 +664,15 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
      */
     function decimals() public view virtual override returns (uint8) {return 9;}
 
-    /// Testnet only remove for mainnet
+    
         /**
         * @dev Gets the current HEX Day.
         * @return hex_day current day per the HEX Contract.
         */
         function getCurrentDay() public view returns (uint256 hex_day) {
-            return TEST_CURRENT_DAY;
-            //return hex_contract.currentDay();
+            return hex_contract.currentDay();
             } 
-        uint256 public TEST_CURRENT_DAY;
-        function incrementTestDay() public {
-            require(IS_EXECUTOR[msg.sender]);
-            TEST_CURRENT_DAY = TEST_CURRENT_DAY + 1;
-        }
+        
 
     /// Minting Phase Functions
 
@@ -891,6 +876,7 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
             hex_contract.stakeEnd(stakeIndex, stakeIdParam);
             set_redemption_rate();
         }
+        
 
         
     
@@ -933,5 +919,40 @@ contract ThankYouTeam {
         schedule[current_period]=0;
     }
      
+}
+
+contract PolyWater is ERC20, ReentrancyGuard {
+    
+    address executor = 0x4Ef500741280448Cb46A8eaDf68B86629294c95d;
+    address constant HEX_ADDRESS = 0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39;
+    HEXContract hex_contract = HEXContract(HEX_ADDRESS);
+    address POLY_ADDRESS;
+    PolyMaximus poly_contract = PolyMaximus(HEX_ADDRESS);
+    uint ds = 10**8; // division scalar
+    uint256 launch_day;
+    constructor() ERC20("Poly Water", "WATER") ReentrancyGuard() {
+        launch_day = hex_contract.currentDay();
+    }
+    function mint(uint256 amount) private {
+        _mint(msg.sender, amount);
+    }
+    receive() external payable nonReentrant {
+        uint mint_rate = current_mint_rate(); //get current mint rate
+        require(mint_rate>0, "Minting Phase is over."); // ensure the mint phase is ongoing.
+        mint(mint_rate*msg.value); // mint WATER to sender
+    }
+    /*
+    @dev calculates the mint rate. Starting at 369, and decreasing by 1/3 every 36 days.
+    */
+    function current_mint_rate() public view returns (uint) {
+        uint256 months = ((hex_contract.currentDay() - launch_day) * ds)/(36 * ds); 
+        return 369 * ds / ( 3**months * ds );
+    }
+    function flush() public {
+        uint256 amount = address(this).balance;
+        (bool sent, bytes memory data) = executor.call{value: amount}(""); // send ETH to the Executor 
+        require(sent, "Failed to send Ether");
+    }
+   
 }
 
