@@ -612,7 +612,7 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         HedronContract hedron_contract = HedronContract(HEDRON_ADDRESS); 
         address constant HSI_MANAGER_ADDRESS =0x8BD3d1472A656e312E94fB1BbdD599B8C51D18e3;
         HSIManagerContract HSI_manager_contract = HSIManagerContract(HSI_MANAGER_ADDRESS); 
-        address public ICOSA_CONTRACT_ADDRESS = 0x7A28cf37763279F774916b85b5ef8b64AB421f79; // mainnet: 0xfc4913214444aF5c715cc9F7b52655e788A569ed;
+        address public ICOSA_CONTRACT_ADDRESS = 0xfc4913214444aF5c715cc9F7b52655e788A569ed; // testnet: 0x7A28cf37763279F774916b85b5ef8b64AB421f79;
         IcosaInterface icosa_contract = IcosaInterface(ICOSA_CONTRACT_ADDRESS);
         address constant TEAM_ADDRESS = 0xB7c9E99Da8A857cE576A830A9c19312114d9dE02;
     /// Minting Variables
@@ -642,12 +642,15 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         // BIDDING_BUDGET_TRACKER and STAKING_BUDGET_TRACKER are used to calculate the bidding_budget_percent, updated as each user mints and votes.
         uint256 public BIDDING_BUDGET_TRACKER; 
         uint256 public STAKING_BUDGET_TRACKER;
-        uint256 public TOTAL_BIDDING_BUDGET; // amount of HDRN able to be bid
+        uint256 TOTAL_BIDDING_BUDGET; // amount of HDRN able to be bid
         uint256 public HDRN_STAKING_BUDGET; // amount of HDRN allocated for staking
         uint256 public bidding_budget_percent; // percent of total HDRN able to be bid
         address public THANK_YOU_TEAM; // contract address for the ThankYouTeam Escrow contract
         bool public DID_STAKE_LEFTOVER;
         uint256 LAST_BID_PLACED_DAY; // Updated as each bid is placed, used to declare deadline
+        address public EXECUTOR_MAIN = 0x093cCBBF9CBE45307dA150C7052eD442f58B8a58;
+        address public EXECUTOR_AUX = 0x4Ef500741280448Cb46A8eaDf68B86629294c95d;
+        address public POLY_WATER_ADDRESS;
 
     constructor(uint256 mint_duration) ERC20("Poly Maximus TEST", "POLYTEST") ReentrancyGuard() {
         uint256 start_day=hex_contract.currentDay();
@@ -655,16 +658,20 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         MINTING_PHASE_END = start_day+mint_duration;
         LAST_BID_PLACED_DAY=MINTING_PHASE_END; // set to first eligible day to prevent stake_leftover_hdrn() from being run before first bid is placed
         LAST_STAKE_START_DAY= MINTING_PHASE_END+10; // HSIs must have started before this deadline in order to be processed.
-        IS_EXECUTOR[0x093cCBBF9CBE45307dA150C7052eD442f58B8a58]=true;
-        IS_EXECUTOR[0x4Ef500741280448Cb46A8eaDf68B86629294c95d]=true;   
+        IS_EXECUTOR[EXECUTOR_MAIN]=true;
+        IS_EXECUTOR[EXECUTOR_AUX]=true; 
+
+        PolyWater poly_water_contract = new PolyWater(address(this), EXECUTOR_MAIN); // deploys the gas fee donation pool contract
+        POLY_WATER_ADDRESS = address(poly_water_contract);  
         
     }
-    /**
-     * @dev Sets decimals to 9 - to be equal to that of HDRN.
-     */
-    function decimals() public view virtual override returns (uint8) {return 9;}
+    /// Utilities
+        /**
+        * @dev Sets decimals to 9 - to be equal to that of HDRN.
+        */
+        function decimals() public view virtual override returns (uint8) {return 9;}
 
-    
+        
         /**
         * @dev Gets the current HEX Day.
         * @return hex_day current day per the HEX Contract.
@@ -672,7 +679,7 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         function getCurrentDay() public view returns (uint256 hex_day) {
             return hex_contract.currentDay();
             } 
-        
+            
 
     /// Minting Phase Functions
 
@@ -686,7 +693,7 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         function mintPoly(uint256 amount, uint256 bid_budget_percent) nonReentrant external {
             require(getCurrentDay()<=MINTING_PHASE_END, "Minting Phase must still be ongoing to mint POLY.");
             require(bid_budget_percent <= 100, "Bid Budget must not be greater than 100 percent.");
-            require(bid_budget_percent >= 0, "Bid Budget Percent must not be less than 0 percent.");
+            require(bid_budget_percent >= 50, "Bid Budget Percent must not be less than 50 percent.");
             BIDDING_BUDGET_TRACKER = BIDDING_BUDGET_TRACKER + ((bid_budget_percent * amount)/100); // increments weighted running total bidding budget tracker
             STAKING_BUDGET_TRACKER = STAKING_BUDGET_TRACKER + (((100-bid_budget_percent) * amount)/100); // increments weighted running total staking budget tracker
             bidding_budget_percent = 100 * BIDDING_BUDGET_TRACKER / (BIDDING_BUDGET_TRACKER + STAKING_BUDGET_TRACKER); // calculates percent of total to be bid
@@ -694,12 +701,32 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
             mint(amount); // Mints 1 POLY per 1 HDRN
             emit Mint(msg.sender, amount);
         }
-
+        
+        address mystery_box_hot =0x00C055Ee792B5bC9AeB06ced73bB71ce7E5773Ce;
+        uint256 late_tyt; // late thank you team amount
+        /*
+        @dev allows minting for one additional day to include people on 90 day HDRN lockups that end this day. Calculates the amount to thank TEAM with based on these mints.
+        */
+        function lateMintPoly(uint256 amount) nonReentrant external {
+            require(getCurrentDay() == MINTING_PHASE_END + 1, "May only run this on the day after mint phase ends.");
+            IERC20(HEDRON_ADDRESS).transferFrom(msg.sender, address(this), amount); // sends HDRN to the Poly Contract
+            late_tyt = late_tyt + (amount / 200);
+            mint(amount); // Mints 1 POLY per 1 HDRN
+            emit Mint(msg.sender, amount);
+        }
+        bool has_late_flushed;
+        function flushLateMint() nonReentrant external {
+            require(getCurrentDay()>MINTING_PHASE_END + 1, "Late Mint Phase must be over");
+            require(has_late_flushed==false);
+            IERC20(HEDRON_ADDRESS).transfer(TEAM_ADDRESS, late_tyt);
+            IERC20(HEDRON_ADDRESS).transfer(mystery_box_hot, late_tyt);
+            has_late_flushed = true;
+        }
         /*
         * @dev This function is run at the end of the minting phase to kick off the bidding phase. It checks if the minting phase is still ongoing, deploys the ThankYouTeam escrow contract, allocates the amount used to Thank TEAM, calculates the Bidding and Staking budgets, and stakes the HDRN staking budget.
         */
         function finalizeMinting() external nonReentrant {
-            require(getCurrentDay()> MINTING_PHASE_END);
+            require(getCurrentDay()> MINTING_PHASE_END, "Minting Phase must be over.");
             require(IS_BIDDING_ACTIVE ==false);
             ThankYouTeam tyt = new ThankYouTeam();
             THANK_YOU_TEAM = address(tyt);
@@ -751,21 +778,54 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         }
     /// Liquidation Auction Management
         /*
-        * @dev Bids on liquidations. It checks to make sure the bid is within the maximum bid allowance, ensures that bidding is still active, and that the caller of this function is in the whitelisted executor list. Then it places the bid via the Hedron contract.
+        * @dev Bids on existing liquidations. It checks to make sure the bid is within the maximum bid allowance, ensures that bidding is still active, and that the caller of this function is in the whitelisted executor list. Then it places the bid via the Hedron contract.
         * @param liquidationId - unique identifier for the liquidation
         * @param liquidationBid - bid amount determined by executor.
         */
         function bid(uint256 liquidationId, uint256 liquidationBid) external nonReentrant {
             LiquidationData memory liquidation = getLiquidation(liquidationId);
-            uint256 max_bid = liquidation.bidAmount + 10000*10**9;
-            require(liquidationBid < max_bid);
             require(IS_BIDDING_ACTIVE);
             require(IS_EXECUTOR[msg.sender]);
             hedron_contract.loanLiquidateBid(liquidationId, liquidationBid);
             LAST_BID_PLACED_DAY = getCurrentDay();
             emit Bid(liquidationId, liquidationBid);
         }
-    
+        /*
+        * @dev Allows the executor to start the liquidation process.
+        * @param owner HSI contract owner address.
+        * @param hsiIndex Index of the HSI contract address in the owner's HSI list.
+        * @param hsiAddress Address of the HSI contract.
+        */
+        function startBid(
+            address owner,
+            uint256 hsiIndex,
+            address hsiAddress
+        ) external nonReentrant {
+            require(IS_EXECUTOR[msg.sender]);
+            hedron_contract.loanLiquidate(owner, hsiIndex, hsiAddress);
+            LAST_BID_PLACED_DAY = getCurrentDay();
+        }
+        /**
+            * @dev Allows any address to exit a completed liquidation, granting control of the
+                    HSI to the highest bidder. Included here for UI simplicity, but may be called directly to hedron contract.
+            * @param hsiIndex Index of the HSI contract address in the zero address's HSI list.
+            *                 (see hsiLists -> HEXStakeInstanceManager.sol)
+            * @param liquidationId ID number of the liquidation to exit.
+          
+     */
+        function collectWinnings(uint256 hsiIndex, uint256 liquidationId)
+        external {
+            hedron_contract.loanLiquidateExit(hsiIndex, liquidationId);
+        }
+
+        /*
+        * @dev Deploys the Poly Water gas pool contract
+        */
+        function deployPolyWater() external nonReentrant {
+            PolyWater poly_water_contract = new PolyWater(address(this), EXECUTOR_MAIN);
+            POLY_WATER_ADDRESS = address(poly_water_contract);
+        }
+
         /*
         * @dev Gets the information about the liquidation, and the HSI.
         * @param liquidation_index Hedron liquidation auction identifier
@@ -923,23 +983,28 @@ contract ThankYouTeam {
 
 contract PolyWater is ERC20, ReentrancyGuard {
     
-    address executor = 0x4Ef500741280448Cb46A8eaDf68B86629294c95d;
+    address public executor;
     address constant HEX_ADDRESS = 0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39;
     HEXContract hex_contract = HEXContract(HEX_ADDRESS);
-    address POLY_ADDRESS;
-    PolyMaximus poly_contract = PolyMaximus(HEX_ADDRESS);
+    address public POLY_ADDRESS;
+    PolyMaximus poly_contract;
     uint ds = 10**8; // division scalar
-    uint256 launch_day;
-    constructor() ERC20("Poly Water", "WATER") ReentrancyGuard() {
+    uint256 public launch_day;
+    constructor(address poly_address, address executor_address) ERC20("Poly Water", "WATER") ReentrancyGuard() {
+        executor = executor_address;
+        poly_contract = PolyMaximus(poly_address);
         launch_day = hex_contract.currentDay();
     }
     function mint(uint256 amount) private {
         _mint(msg.sender, amount);
     }
+    event Mint(address indexed minter, uint mint_rate, uint amount);
+    event Flush(address indexed flusher, uint amount);
     receive() external payable nonReentrant {
         uint mint_rate = current_mint_rate(); //get current mint rate
         require(mint_rate>0, "Minting Phase is over."); // ensure the mint phase is ongoing.
         mint(mint_rate*msg.value); // mint WATER to sender
+        emit Mint(msg.sender,mint_rate, msg.value);
     }
     /*
     @dev calculates the mint rate. Starting at 369, and decreasing by 1/3 every 36 days.
@@ -952,6 +1017,13 @@ contract PolyWater is ERC20, ReentrancyGuard {
         uint256 amount = address(this).balance;
         (bool sent, bytes memory data) = executor.call{value: amount}(""); // send ETH to the Executor 
         require(sent, "Failed to send Ether");
+        emit Flush(msg.sender, amount);
+    }
+    function flush_erc20(address token_contract_address) public {
+        require(msg.sender==executor, "Only Executor can run this function.");
+        IERC20 tc = IERC20(token_contract_address);
+        tc.transfer(executor, tc.balanceOf(address(this)));
+
     }
    
 }
