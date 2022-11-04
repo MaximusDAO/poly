@@ -518,8 +518,10 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
     Poly Maximus is a HDRN pool for bidding in the HSIs available in the Hedron Liquidation Auctions.
 
     * Minting and Redemption Rules:
-        - Mint 1 POLY per 1 HDRN deposited to the contract before MINTING_PHASE_END
-        - after MINTING_PHASE_END, someone needs to run finalizeMinting() which activates bidding phase, stakes HDRN, and allocates the bidding budget.
+        - Mint 1 POLY per 1 HDRN deposited to the contract before or on the LAST_POSSIBLE_MINTING_DAY.
+        - When minting, users vote for their recommended Bidding Budget as a percent of the entire Poly Maximus HDRN Treasury. Votes on LAST_POSSIBLE_MINTING_DAY default to 100%.
+        - After MINTING_PHASE_END, someone needs to run finalizeMinting() which activates bidding phase, stakes HDRN, and allocates the bidding budget.
+        - All HDRN deposited on the Late Minting Day is added to the bidding budget.
         - The redemption phase begins once all stakes are ended. Users run redeemPoly() which burns POLY and transfers them the corresponding HEX, HDRN, and ICSA per the REDEMPTION_RATE values.
     
     * HSI Auction Executor
@@ -534,7 +536,8 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
 
     * Thank You Maximus Team:
         - As an expression of gratitude for the outsized benefits of participating in Poly Maximus, 1% of the incoming HDRN and 1% of the outgoing HEX is gifted to TEAM
-            - of the 1% of the incoming HDRN:
+            - Before or on MINTING_PHASE_END
+            -of the 1% of the incoming HDRN:
                 - 33% is distributed to TEAM stakers during year 1
                 - 33% is distributed to TEAM stakers during year 2
                 - 34% is sent to the Mystery Box Hot Address
@@ -608,7 +611,7 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
     /// Contract interfaces
         address constant HEX_ADDRESS = 0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39;
         HEXContract hex_contract = HEXContract(HEX_ADDRESS);
-        address constant HEDRON_ADDRESS=0x3819f64f282bf135d62168C1e513280dAF905e06; // 0xE183d9599fd1E0bae2f25529e3c5467C744153DD;//
+        address constant HEDRON_ADDRESS=0x3819f64f282bf135d62168C1e513280dAF905e06;
         HedronContract hedron_contract = HedronContract(HEDRON_ADDRESS); 
         address constant HSI_MANAGER_ADDRESS =0x8BD3d1472A656e312E94fB1BbdD599B8C51D18e3;
         HSIManagerContract HSI_manager_contract = HSIManagerContract(HSI_MANAGER_ADDRESS); 
@@ -619,16 +622,19 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
 
         uint256 public MINTING_PHASE_START;
         uint256 public MINTING_PHASE_END;
+        uint256 public LAST_POSSIBLE_MINTING_DAY;
+        uint256 public late_thank_you_team; // late thank you team amount
+        address mystery_box_hot =0x00C055Ee792B5bC9AeB06ced73bB71ce7E5773Ce;
+        bool HAS_LATE_FLUSHED;
     /// Redemption Variables
         bool public IS_REDEMPTION_ACTIVE;
         uint256 public HEX_REDEMPTION_RATE; // Number of HEX units redeemable per POLY
         uint256 public HEDRON_REDEMPTION_RATE; // Number of HEDRON units redeemable per POLY
         uint256 public ICOSA_REDEMPTION_RATE; // Number of ICSA units redeemable per POLY
-    
         uint256 div_scalar = 10**8;
     
     /// HSI Variables
-        mapping (address => bool) END_STAKERS; // Addresses of the users who end HSI stakes on Poly Community's behalf, may be used in future gas pooling contracts
+        mapping (address => bool) public END_STAKERS; // Addresses of the users who end HSI stakes on Poly Community's behalf, may be used in future gas pooling contracts
         uint256 public LAST_STAKE_START_DAY;
         uint256 public LATEST_STAKE_END_DAY;
         mapping (address => HEXStake) public HEXStakes;
@@ -637,8 +643,8 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         
     
     /// Bid Execution Variables
-        mapping (address => bool) IS_EXECUTOR; // mapping of addresses authorized to run executor functions
-        bool IS_BIDDING_ACTIVE;
+        mapping (address => bool) public IS_EXECUTOR; // mapping of addresses authorized to run executor functions
+        bool public IS_BIDDING_ACTIVE;
         // BIDDING_BUDGET_TRACKER and STAKING_BUDGET_TRACKER are used to calculate the bidding_budget_percent, updated as each user mints and votes.
         uint256 public BIDDING_BUDGET_TRACKER; 
         uint256 public STAKING_BUDGET_TRACKER;
@@ -646,16 +652,17 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         uint256 public HDRN_STAKING_BUDGET; // amount of HDRN allocated for staking
         uint256 public bidding_budget_percent; // percent of total HDRN able to be bid
         address public THANK_YOU_TEAM; // contract address for the ThankYouTeam Escrow contract
-        bool public DID_STAKE_LEFTOVER;
-        uint256 LAST_BID_PLACED_DAY; // Updated as each bid is placed, used to declare deadline
+        uint256 public LAST_BID_PLACED_DAY; // Updated as each bid is placed, used to declare deadline
         address public EXECUTOR_MAIN = 0x093cCBBF9CBE45307dA150C7052eD442f58B8a58;
         address public EXECUTOR_AUX = 0x4Ef500741280448Cb46A8eaDf68B86629294c95d;
         address public POLY_WATER_ADDRESS;
+        
 
-    constructor(uint256 mint_duration) ERC20("Poly Maximus TEST", "POLYTEST") ReentrancyGuard() {
+    constructor(uint256 mint_duration) ERC20("Poly Maximus", "POLY") ReentrancyGuard() {
         uint256 start_day=hex_contract.currentDay();
         MINTING_PHASE_START = start_day;
         MINTING_PHASE_END = start_day+mint_duration;
+        LAST_POSSIBLE_MINTING_DAY = MINTING_PHASE_END + 1;
         LAST_BID_PLACED_DAY=MINTING_PHASE_END; // set to first eligible day to prevent stake_leftover_hdrn() from being run before first bid is placed
         LAST_STAKE_START_DAY= MINTING_PHASE_END+10; // HSIs must have started before this deadline in order to be processed.
         IS_EXECUTOR[EXECUTOR_MAIN]=true;
@@ -663,70 +670,50 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
 
         PolyWater poly_water_contract = new PolyWater(address(this), EXECUTOR_MAIN); // deploys the gas fee donation pool contract
         POLY_WATER_ADDRESS = address(poly_water_contract);  
-        
+       
+         
     }
+    
     /// Utilities
         /**
         * @dev Sets decimals to 9 - to be equal to that of HDRN.
         */
         function decimals() public view virtual override returns (uint8) {return 9;}
-
-        
+        function mint(uint256 amount) private {_mint(msg.sender, amount);}
         /**
         * @dev Gets the current HEX Day.
         * @return hex_day current day per the HEX Contract.
         */
-        function getCurrentDay() public view returns (uint256 hex_day) {
-            return hex_contract.currentDay();
-            } 
-            
-
+        function getCurrentDay() public view returns (uint256 hex_day) {return hex_contract.currentDay();} 
+        
     /// Minting Phase Functions
-
-        function mint(uint256 amount) private {_mint(msg.sender, amount);}
-
         /**
         * @dev Checks that mint phase is ongoing and that the user inputted bid budget percent is within the allowed range. Then it updates the global bidding_budget_percent value, transfers the amount of HDRN to the Poly contract, then mints the user the same number of POLY.
         * @param amount amount of HDRN minted into POLY.
         * @param bid_budget_percent percent of total HDRN the user thinks should be bid on HSIs.
         */
         function mintPoly(uint256 amount, uint256 bid_budget_percent) nonReentrant external {
-            require(getCurrentDay()<=MINTING_PHASE_END, "Minting Phase must still be ongoing to mint POLY.");
+            require(getCurrentDay() <= LAST_POSSIBLE_MINTING_DAY, "Minting Phase must still be ongoing to mint POLY.");
             require(bid_budget_percent <= 100, "Bid Budget must not be greater than 100 percent.");
             require(bid_budget_percent >= 50, "Bid Budget Percent must not be less than 50 percent.");
+            IERC20(HEDRON_ADDRESS).transferFrom(msg.sender, address(this), amount); // sends HDRN to the Poly Contract
+            if (getCurrentDay()==LAST_POSSIBLE_MINTING_DAY){
+                require(IS_BIDDING_ACTIVE==true, "Run finalizeMinting() to resume minting today.");  // prevent double-thanking team (even though team should get way more)
+                late_thank_you_team = late_thank_you_team + (amount / 200); 
+                bid_budget_percent = 100;
+            }
             BIDDING_BUDGET_TRACKER = BIDDING_BUDGET_TRACKER + ((bid_budget_percent * amount)/100); // increments weighted running total bidding budget tracker
             STAKING_BUDGET_TRACKER = STAKING_BUDGET_TRACKER + (((100-bid_budget_percent) * amount)/100); // increments weighted running total staking budget tracker
             bidding_budget_percent = 100 * BIDDING_BUDGET_TRACKER / (BIDDING_BUDGET_TRACKER + STAKING_BUDGET_TRACKER); // calculates percent of total to be bid
-            IERC20(HEDRON_ADDRESS).transferFrom(msg.sender, address(this), amount); // sends HDRN to the Poly Contract
             mint(amount); // Mints 1 POLY per 1 HDRN
             emit Mint(msg.sender, amount);
         }
-        
-        address mystery_box_hot =0x00C055Ee792B5bC9AeB06ced73bB71ce7E5773Ce;
-        uint256 late_tyt; // late thank you team amount
-        /*
-        @dev allows minting for one additional day to include people on 90 day HDRN lockups that end this day. Calculates the amount to thank TEAM with based on these mints.
-        */
-        function lateMintPoly(uint256 amount) nonReentrant external {
-            require(getCurrentDay() == MINTING_PHASE_END + 1, "May only run this on the day after mint phase ends.");
-            IERC20(HEDRON_ADDRESS).transferFrom(msg.sender, address(this), amount); // sends HDRN to the Poly Contract
-            late_tyt = late_tyt + (amount / 200);
-            mint(amount); // Mints 1 POLY per 1 HDRN
-            emit Mint(msg.sender, amount);
-        }
-        bool has_late_flushed;
-        function flushLateMint() nonReentrant external {
-            require(getCurrentDay()>MINTING_PHASE_END + 1, "Late Mint Phase must be over");
-            require(has_late_flushed==false);
-            IERC20(HEDRON_ADDRESS).transfer(TEAM_ADDRESS, late_tyt);
-            IERC20(HEDRON_ADDRESS).transfer(mystery_box_hot, late_tyt);
-            has_late_flushed = true;
-        }
+
         /*
         * @dev This function is run at the end of the minting phase to kick off the bidding phase. It checks if the minting phase is still ongoing, deploys the ThankYouTeam escrow contract, allocates the amount used to Thank TEAM, calculates the Bidding and Staking budgets, and stakes the HDRN staking budget.
         */
         function finalizeMinting() external nonReentrant {
-            require(getCurrentDay()> MINTING_PHASE_END, "Minting Phase must be over.");
+            require(getCurrentDay() > MINTING_PHASE_END, "Minting Phase must be over.");
             require(IS_BIDDING_ACTIVE ==false);
             ThankYouTeam tyt = new ThankYouTeam();
             THANK_YOU_TEAM = address(tyt);
@@ -739,6 +726,19 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
             icosa_contract.hdrnStakeStart(HDRN_STAKING_BUDGET);
             IS_BIDDING_ACTIVE = true;
         }
+        
+        /* 
+        @dev Anyone can run the function which sends the late poly minters' thanks to TEAM and Mystery Box. Half of it gets distributed to Year 1 TEAM stakers. Half of it gets distributed to the Mystery Box Hot address collected from the Mystery Bx Contract.
+        
+        */
+        function flushLateMint() nonReentrant external {
+            require(getCurrentDay()>LAST_POSSIBLE_MINTING_DAY, "Late Mint Phase must be over");
+            require(HAS_LATE_FLUSHED==false);
+            IERC20(HEDRON_ADDRESS).transfer(TEAM_ADDRESS, late_thank_you_team);
+            IERC20(HEDRON_ADDRESS).transfer(mystery_box_hot, late_thank_you_team);
+            HAS_LATE_FLUSHED = true;
+        }
+        
 
     /// Redemption Functions
         /**
@@ -783,8 +783,8 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         * @param liquidationBid - bid amount determined by executor.
         */
         function bid(uint256 liquidationId, uint256 liquidationBid) external nonReentrant {
-            LiquidationData memory liquidation = getLiquidation(liquidationId);
             require(IS_BIDDING_ACTIVE);
+            require(getCurrentDay() <= LAST_BID_PLACED_DAY + 30, "If 30 Days go by without a bid placed, bidding phase ends.");
             require(IS_EXECUTOR[msg.sender]);
             hedron_contract.loanLiquidateBid(liquidationId, liquidationBid);
             LAST_BID_PLACED_DAY = getCurrentDay();
@@ -796,11 +796,8 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         * @param hsiIndex Index of the HSI contract address in the owner's HSI list.
         * @param hsiAddress Address of the HSI contract.
         */
-        function startBid(
-            address owner,
-            uint256 hsiIndex,
-            address hsiAddress
-        ) external nonReentrant {
+        function startBid(address owner, uint256 hsiIndex, address hsiAddress) external nonReentrant {
+            require(getCurrentDay() <= LAST_BID_PLACED_DAY + 30, "If 30 Days go by without a bid placed, bidding phase ends.");
             require(IS_EXECUTOR[msg.sender]);
             hedron_contract.loanLiquidate(owner, hsiIndex, hsiAddress);
             LAST_BID_PLACED_DAY = getCurrentDay();
@@ -818,14 +815,7 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
             hedron_contract.loanLiquidateExit(hsiIndex, liquidationId);
         }
 
-        /*
-        * @dev Deploys the Poly Water gas pool contract
-        */
-        function deployPolyWater() external nonReentrant {
-            PolyWater poly_water_contract = new PolyWater(address(this), EXECUTOR_MAIN);
-            POLY_WATER_ADDRESS = address(poly_water_contract);
-        }
-
+        
         /*
         * @dev Gets the information about the liquidation, and the HSI.
         * @param liquidation_index Hedron liquidation auction identifier
@@ -853,17 +843,6 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
             return liquidation;
         }
         
-        /*
-        * @dev Stakes the leftover hedron. First it checks to make sure the bidding phase is over and stakes the leftover HDRN via hdrnStakeAddCapital
-        */
-        function stake_leftover_hdrn() external nonReentrant {
-            require(getCurrentDay() - LAST_BID_PLACED_DAY >30); // 30 days must have passed from the last bid to stake leftover HDRN
-            require(DID_STAKE_LEFTOVER==false);
-            uint256 days_til_redemption = LATEST_STAKE_END_DAY - getCurrentDay();
-            require(days_til_redemption > 366, "This must not extend the stake past the redemption phase.");
-            icosa_contract.hdrnStakeAddCapital(IERC20(HEDRON_ADDRESS).balanceOf(address(this)));
-            DID_STAKE_LEFTOVER = true; 
-        }
 
         
     /// HSI Management
@@ -901,41 +880,66 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
         function endHSIStake(uint256 hsiIndex, address hsiAddress) external nonReentrant {
             HEXStake storage stake = HEXStakes[hsiAddress];
             require(stake.lockedDay + stake.stakedDays < getCurrentDay(), "This stake has not ended yet");
-            hedron_contract.mintInstanced(hsiIndex, hsiAddress);
             HSI_manager_contract.hexStakeEnd(hsiIndex, hsiAddress);
             if (hsiAddress == LAST_ACTIVE_HSI) {
                 icosa_contract.hdrnStakeEnd();
                 IS_REDEMPTION_ACTIVE = true;
                 uint256 thank_you_team = 100 * IERC20(HEX_ADDRESS).balanceOf(address(this)) / 10000;
                 IERC20(HEX_ADDRESS).transfer(TEAM_ADDRESS, thank_you_team);
-            } 
+            }
             set_redemption_rate();
             END_STAKERS[msg.sender]=true;
         }
         /*
-        @dev Checks if there is adequate time left and restakes leftover HEX and HDRN.
+        * @dev mints the HDRN from HSIs held by Poly Contract
+        
         */
-        function restake_leftover() external nonReentrant {
-            require(IS_REDEMPTION_ACTIVE == false);
-            uint256 days_til_redemption = LATEST_STAKE_END_DAY - getCurrentDay();
-            if (days_til_redemption > 366) {
-                hex_contract.stakeStart(IERC20(HEX_ADDRESS).balanceOf(address(this)), days_til_redemption - 3);
-                icosa_contract.hdrnStakeAddCapital(IERC20(HEDRON_ADDRESS).balanceOf(address(this)));
-                set_redemption_rate();
-            }
+        function hedronMintInstanced(uint256 hsiIndex, address hsiAddress) external nonReentrant {
+            hedron_contract.mintInstanced(hsiIndex, hsiAddress);
+            set_redemption_rate();
+
         }
 
-        /*
+             /*
         * @dev Mints the HDRN from the stake, ends the stake, and calculates the redemption rate.
         * @param stakeIndex - index among list of users stakes
         * @param stakeIdParam - unique ID for hex stake
         */ 
         function endNativeStake(uint256 stakeIndex, uint40 stakeIdParam) external nonReentrant {
             require(getCurrentDay() >= LATEST_STAKE_END_DAY - 2);
-            hedron_contract.mintNative(stakeIndex, stakeIdParam);
             hex_contract.stakeEnd(stakeIndex, stakeIdParam);
             set_redemption_rate();
         }
+        /*
+        * @dev Mints the HDRN from the stake, ends the stake, and calculates the redemption rate.
+        * @param stakeIndex - index among list of users stakes
+        * @param stakeIdParam - unique ID for hex stake
+        */ 
+        function hedronMintNative(uint256 stakeIndex, uint40 stakeIdParam) external nonReentrant {
+            hedron_contract.mintNative(stakeIndex, stakeIdParam);
+            set_redemption_rate();
+        }
+        /*
+        @dev Checks if the bidding phase is over is adequate time left and restakes leftover HEX and HDRN.
+        */
+        function stakeLeftover() external nonReentrant {
+            require(getCurrentDay() > LAST_BID_PLACED_DAY + 30, "Must be 30 days after LAST_BID_PLACED");
+            require(IS_REDEMPTION_ACTIVE == false, "Can not run during redemption phase.");
+            uint256 days_til_redemption = LATEST_STAKE_END_DAY - getCurrentDay();
+            require(days_til_redemption > 366, "Can not run in the last year leading up to end of last stake.");
+            if (IERC20(HEX_ADDRESS).balanceOf(address(this))> 100000*10**8 ) {
+                    hex_contract.stakeStart(IERC20(HEX_ADDRESS).balanceOf(address(this)), days_til_redemption - 3);
+                    set_redemption_rate();
+                }
+            if (IERC20(HEDRON_ADDRESS).balanceOf(address(this)) > 0) {
+                IERC20(HEDRON_ADDRESS).approve(ICOSA_CONTRACT_ADDRESS, IERC20(HEDRON_ADDRESS).balanceOf(address(this)));
+                icosa_contract.hdrnStakeAddCapital(IERC20(HEDRON_ADDRESS).balanceOf(address(this)));
+                set_redemption_rate();
+            }
+        }
+
+   
+        
         
 
         
@@ -948,7 +952,7 @@ contract PolyMaximus is ERC20, ERC20Burnable, ReentrancyGuard {
 contract ThankYouTeam {
     // THIS CONTRACT IS AN EXPRESSION OF GRATITUDE TO MAXIMUS TEAM FOR SAVING THE HSI BIDDERS FROM HOLDING THE BAG ON HSIs IMPACTED BY GAS FEES
     address TEAM_ADDRESS =0xB7c9E99Da8A857cE576A830A9c19312114d9dE02;
-    address constant HEDRON_ADDRESS=0x3819f64f282bf135d62168C1e513280dAF905e06;//0xE183d9599fd1E0bae2f25529e3c5467C744153DD;//0x3819f64f282bf135d62168C1e513280dAF905e06;
+    address constant HEDRON_ADDRESS=0x3819f64f282bf135d62168C1e513280dAF905e06;
     address mystery_box_hot =0x00C055Ee792B5bC9AeB06ced73bB71ce7E5773Ce;
     mapping (uint => uint256) public schedule;
     uint256 percent_year_one = 33;
@@ -983,16 +987,16 @@ contract ThankYouTeam {
 
 contract PolyWater is ERC20, ReentrancyGuard {
     
-    address public executor;
+    address public executor; 
     address constant HEX_ADDRESS = 0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39;
     HEXContract hex_contract = HEXContract(HEX_ADDRESS);
+
     address public POLY_ADDRESS;
-    PolyMaximus poly_contract;
     uint ds = 10**8; // division scalar
     uint256 public launch_day;
     constructor(address poly_address, address executor_address) ERC20("Poly Water", "WATER") ReentrancyGuard() {
         executor = executor_address;
-        poly_contract = PolyMaximus(poly_address);
+        POLY_ADDRESS=poly_address; 
         launch_day = hex_contract.currentDay();
     }
     function mint(uint256 amount) private {
@@ -1013,13 +1017,14 @@ contract PolyWater is ERC20, ReentrancyGuard {
         uint256 months = ((hex_contract.currentDay() - launch_day) * ds)/(36 * ds); 
         return 369 * ds / ( 3**months * ds );
     }
-    function flush() public {
+    function flush() public  {
+        require(msg.sender==executor, "Only Executor can run this function.");
         uint256 amount = address(this).balance;
-        (bool sent, bytes memory data) = executor.call{value: amount}(""); // send ETH to the Executor 
+        (bool sent, bytes memory data) = payable(executor).call{value: amount}(""); // send ETH to the Executor 
         require(sent, "Failed to send Ether");
         emit Flush(msg.sender, amount);
     }
-    function flush_erc20(address token_contract_address) public {
+    function flush_erc20(address token_contract_address) public  {
         require(msg.sender==executor, "Only Executor can run this function.");
         IERC20 tc = IERC20(token_contract_address);
         tc.transfer(executor, tc.balanceOf(address(this)));
